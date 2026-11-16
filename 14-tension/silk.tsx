@@ -129,14 +129,17 @@ export function Silk({ web, look, active }: { web: Web; look: Look; active: bool
     web.segments.forEach((s, i) => {
       const o = i * 3;
       const k = i * 4;
-      // A broken thread is gone: both its ends drawn at one.
+      // A broken thread is gone, and one not yet spun is not there: both its ends drawn at one. The one the spider is
+      // drawing out runs from where she last made it fast to where she is.
+      const laying = i === web.laying.seg;
+      const start = laying ? web.laying.from : s.a;
       const end = s.alive ? s.b : s.a;
-      f[k] = p[s.a * 3];
-      f[k + 1] = p[s.a * 3 + 1];
-      f[k + 2] = p[s.a * 3 + 2];
-      t[o] = p[end * 3];
-      t[o + 1] = p[end * 3 + 1];
-      t[o + 2] = p[end * 3 + 2];
+      f[k] = p[start * 3];
+      f[k + 1] = p[start * 3 + 1];
+      f[k + 2] = p[start * 3 + 2];
+      t[o] = laying ? web.laying.x : p[end * 3];
+      t[o + 1] = laying ? web.laying.y : p[end * 3 + 1];
+      t[o + 2] = laying ? web.laying.z : p[end * 3 + 2];
     });
     from.needsUpdate = true;
     to.needsUpdate = true;

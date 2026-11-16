@@ -5,9 +5,11 @@ import { useMemo } from "react";
 import * as THREE from "three/webgpu";
 import { Fn, cameraPosition, color, dot, float, fract, max, mix, mx_fractal_noise_float, normalWorld, normalize, positionLocal, positionWorld, pow, smoothstep } from "three/tsl";
 import { useDispose } from "../shared/engine/dispose";
+import { sound } from "../shared/engine/sound";
 import { sky } from "./backdrop";
+import { barkFront } from "./limbs";
 import type { Look } from "./versions";
-import type { Web } from "./web";
+import { Kind as Thread, type Run, type Web } from "./web";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- TSL's node types do not model every operator. */
 
@@ -16,6 +18,7 @@ import type { Web } from "./web";
 // that grips a thread, and rides that thread as the web swings. She walks in an alternating tetrapod: legs 1 and 3 of
 // one side with 2 and 4 of the other, the two sets taking turns, each set rippling from back to front. She runs in
 // dashes with sudden freezes, as spiders do, feels about with her palps when she stops, and sits head down at the hub.
+// Asked to, she spins the web again from bare twigs, in the order a spider does, drawing each thread out behind her.
 
 export const alarm = { node: -1, at: 0 };
 // For testing in development: send her somewhere from the console.
@@ -247,6 +250,17 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
       // When she last felt the web with a foreleg.
       tug: 2,
       home: true,
+      // Spinning: which spinning of the web she is at work on, and what she is doing: walking to where the next line
+      // begins, laying one as she walks it, carrying one round by the silk already up, or standing while one is let
+      // out on the breeze. Of a line let out, how many threads have gone and how far into the next it is.
+      job: null as object | null,
+      phase: "walk" as "walk" | "lay" | "carry" | "float" | "sink",
+      // Mending: the torn thread she is laying again, or on her way to.
+      mend: null as Run | null,
+      // How far she is lifted toward the eye to ride over a limb, where the thread she is on runs through the wood.
+      rise: 0,
+      out: 0,
+      paid: 0,
       seen: 0,
       at: new THREE.Vector3(),
       heading: new THREE.Vector3(0, -1, 0),
@@ -307,7 +321,7 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
     const p = web.position;
     const held = state.legs.map((l) => (l.swing >= 0 ? l.toNode : l.node));
     for (let i = 0; i < web.count; i++) {
-      if (i === avoid || web.pinned[i] || held.includes(i)) continue;
+      if (i === avoid || web.pinned[i] || !web.hung[i] || held.includes(i)) continue;
       const d = (p[i * 3] - at.x) ** 2 + (p[i * 3 + 1] - at.y) ** 2 + (p[i * 3 + 2] - at.z) ** 2;
       if (d < bestD) {
         bestD = d;
@@ -317,25 +331,194 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
     return best;
   };
 
+  const top = golden ? 0.55 : 0.75;
   useFrame((_, rawDelta) => {
-    const delta = Math.min(rawDelta, 1 / 30);
-    const s = state;
     // Hidden, she keeps still, and does not answer what was plucked meanwhile on another web.
     if (!active) {
-      s.seen = alarm.at;
+      state.seen = alarm.at;
       return;
     }
+    const delta = Math.min(rawDelta, 1 / 30);
+    // Spinning a web is an hour's work, shown in about a minute: her own time runs several times over in each frame,
+    // so it is her same gait, only quicker.
+    const lapse = web.building ? Math.min(8, Math.max(1, (web.silk * 1.25) / (top * 70))) : 1;
+    const times = Math.ceil(lapse);
+    for (let k = 0; k < times; k++) tick((delta * lapse) / times);
+    parts.segments.instanceMatrix.needsUpdate = true;
+    parts.joints.instanceMatrix.needsUpdate = true;
+    parts.spines.instanceMatrix.needsUpdate = true;
+  });
+
+  const tick = (delta: number) => {
+    const s = state;
     s.time += delta;
     const { a, b, d, right, up, want, hip, across, joints, basis, q, m } = s3;
-    const top = golden ? 0.55 : 0.75;
     const turn = (toward: number, rate: number) => {
       const by = Math.atan2(Math.sin(toward - s.yaw), Math.cos(toward - s.yaw));
       s.yaw += by * (1 - Math.exp(-delta * rate));
       s.heading.set(Math.cos(s.yaw), Math.sin(s.yaw), 0);
     };
 
-    // Something has landed: out to it, in dashes.
-    if (alarm.at !== s.seen && alarm.node >= 0) {
+    // The old web is to come down: she leaves it for the point on the frame she will start the new one from, by the
+    // silk, and from there hauls it in. If there is no way there she is not waited for.
+    const job = web.building;
+    if (web.leaving) {
+      s.seen = alarm.at;
+      if (s.job !== web.leaving) {
+        s.job = web.leaving;
+        s.phase = "walk";
+        s.mend = null;
+        s.home = false;
+        const from = s.route.length > 1 ? s.route[Math.min(s.leg + 1, s.route.length - 1)] : (s.route[0] ?? web.hub);
+        const way = web.way(from, web.perch);
+        s.route = way.length > 1 ? way : [from];
+        s.leg = 0;
+        s.u = 0;
+      } else if (!(s.route.length > 1 && s.leg < s.route.length - 1)) {
+        web.eat();
+        // Her feet let go of what is coming in.
+        for (const leg of s.legs) {
+          if (leg.node >= 0 && !web.hung[leg.node]) leg.node = -1;
+          if (leg.toNode >= 0 && !web.hung[leg.toNode]) leg.toNode = -1;
+        }
+      }
+    } else if (web.eating >= 0) {
+      // She stays where she is and hauls it in.
+      s.seen = alarm.at;
+      s.wait = 0;
+    } else if (job) {
+      s.seen = alarm.at;
+      if (s.job !== job) {
+        // Bare twigs: she starts at the first of them.
+        s.job = job;
+        s.phase = "walk";
+        s.started = false;
+        s.route = [web.runs[job.run].nodes[0]];
+        s.leg = 0;
+        s.u = 0;
+        s.speed = 0;
+        s.home = false;
+        node(s.route[0], s.at);
+        for (const leg of s.legs) {
+          leg.node = -1;
+          leg.toNode = -1;
+          leg.swing = -1;
+        }
+      }
+      // A line let out on the breeze, while she stands and waits for it to catch.
+      const floating = web.runs[job.run];
+      if (s.phase === "float" && floating) {
+        s.paid += delta * 0.45;
+        while (s.out < floating.segs.length && s.paid >= web.segments[floating.segs[s.out]].rest) {
+          s.paid -= web.segments[floating.segs[s.out]].rest;
+          web.spin(floating.segs[s.out]);
+          web.hung[floating.nodes[++s.out]] = 1;
+        }
+      }
+      const waiting = s.phase === "float" && floating && s.out < floating.segs.length;
+      if (!waiting && !(s.route.length > 1 && s.leg < s.route.length - 1)) {
+        const here = s.route[0];
+        const slung = web.runs[job.run];
+        if (s.phase === "carry" && slung && slung.mode === "sling") {
+          // The first line across is fast at both ends and hangs loose. Out along it to its middle, and down it goes.
+          slung.segs.forEach((seg, k) => {
+            web.spin(seg);
+            web.hung[slung.nodes[k + 1]] = 1;
+          });
+          web.slacken(slung.nodes);
+          s.phase = "sink";
+          s.route = slung.nodes.slice(slung.nodes.indexOf(web.hub)).reverse();
+          s.leg = 0;
+          s.u = 0;
+        } else if (s.phase !== "walk") {
+          // Made fast at its far end: the line is let go to hang, and rings a little as it takes the strain. One she
+          // carried round is only now pulled straight between its two ends.
+          const made = web.runs[job.run];
+          web.sink(1);
+          made.segs.forEach((seg, k) => {
+            web.spin(seg);
+            web.hung[made.nodes[k + 1]] = 1;
+          });
+          web.hang(made.free);
+          if (made.kind === Thread.Frame || made.kind === Thread.Spoke) sound.play("pluck", { gain: 0.05, pitch: 1.4 + Math.random() * 0.5, size: 0.1, pan: s.at.x * 0.4 });
+          s.phase = "walk";
+          job.run++;
+        }
+        const next = s.phase === "sink" ? undefined : web.runs[job.run];
+        if (s.phase === "sink") {
+          // Already on her way out along the sling.
+        } else if (!next) {
+          web.finish();
+          s.job = null;
+          s.wait = 1;
+        } else {
+          // If there is no way there along the silk, as when what she stood on has been snapped, she starts regardless.
+          const way = here === next.nodes[0] ? [] : web.way(here, next.nodes[0]);
+          if (way.length > 1) s.route = way;
+          else if (next.mode === "float") {
+            s.phase = "float";
+            s.out = 0;
+            s.paid = 0;
+            s.route = [next.nodes[0]];
+          } else {
+            // Carried round by the silk already up, if there is a way round; if not, laid as she goes.
+            const round = next.mode === "carry" || next.mode === "sling" ? web.way(next.nodes[0], next.nodes[next.nodes.length - 1]) : [];
+            s.phase = round.length > 1 ? "carry" : "lay";
+            s.route = round.length > 1 ? round : next.nodes;
+          }
+          s.leg = 0;
+          s.u = 0;
+        }
+      }
+    } else if (s.mend || (web.torn.length > 0 && web.grabbed < 0 && web.time - web.tornAt > 3 && !(s.route.length > 1 && s.leg < s.route.length - 1))) {
+      // Mending: when the web has been still a while after threads were snapped, she goes out to the nearest of them
+      // along the silk and lays it again from one end to the other, then the next, and home when there are no more
+      // she can reach. Nothing plucked draws her off it.
+      s.seen = alarm.at;
+      if (!(s.route.length > 1 && s.leg < s.route.length - 1)) {
+        const here = s.route[0] ?? web.hub;
+        if (s.phase === "lay" && s.mend) {
+          sound.play("pluck", { gain: 0.05, pitch: 1.5 + Math.random() * 0.5, size: 0.1, pan: s.at.x * 0.4 });
+          s.phase = "walk";
+          s.mend = null;
+        }
+        web.torn = web.torn.filter((seg) => !web.segments[seg].alive);
+        if (s.mend && here === s.mend.nodes[0]) {
+          s.phase = "lay";
+          s.route = s.mend.nodes;
+        } else {
+          // The nearest torn thread with an end she can get to.
+          const far = web.reach(here);
+          let best = -1;
+          let from = -1;
+          for (const index of web.torn) {
+            const seg = web.segments[index];
+            const end = far[seg.a] <= far[seg.b] ? seg.a : seg.b;
+            if (far[end] < (from < 0 ? Infinity : far[from])) {
+              best = index;
+              from = end;
+            }
+          }
+          if (best < 0) {
+            // None, or none she can reach: home, and she looks again in a while.
+            s.mend = null;
+            s.phase = "walk";
+            web.tornAt = web.time;
+            s.wait = here === web.hub ? 0 : 0.3;
+            s.home = false;
+            s.route = [here];
+          } else {
+            const seg = web.segments[best];
+            s.mend = { mode: "lay", nodes: [from, from === seg.a ? seg.b : seg.a], segs: [best], free: [], pace: 0.6, kind: seg.kind };
+            const way = here === from ? [] : web.way(here, from);
+            s.phase = way.length > 1 ? "walk" : "lay";
+            s.route = way.length > 1 ? way : s.mend.nodes;
+          }
+        }
+        s.leg = 0;
+        s.u = 0;
+      }
+    } else if (alarm.at !== s.seen && alarm.node >= 0) {
       s.seen = alarm.at;
       const from = s.route.length > 1 ? s.route[Math.min(s.leg + 1, s.route.length - 1)] : (s.route[0] ?? web.hub);
       const route = web.path(from, alarm.node);
@@ -352,7 +535,11 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
     // How fast: dashing, freezing, slowing on the last stretch, unhurried going home.
     let wanted = 0;
     const moving = s.route.length > 1 && s.leg < s.route.length - 1;
-    if (moving) {
+    const making = web.building ? web.runs[web.building.run] : (s.mend ?? undefined);
+    const run = s.phase === "lay" ? making : undefined;
+    if (moving && (web.building || web.leaving)) wanted = top * (s.phase === "sink" ? 0.22 : run ? run.pace : 1);
+    else if (moving && s.mend) wanted = top * (run ? run.pace : 0.8);
+    else if (moving) {
       if (s.frozen > 0) s.frozen -= delta;
       else {
         s.dash -= delta;
@@ -374,6 +561,11 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
       while (s.u >= 1 && s.leg < s.route.length - 1) {
         s.u -= 1;
         s.leg++;
+        // Spinning, each point she passes has silk to it now.
+        if (run) {
+          web.spin(run.segs[s.leg - 1]);
+          web.hung[s.route[s.leg]] = 1;
+        }
       }
       if (s.leg >= s.route.length - 1) {
         const end = s.route[s.route.length - 1];
@@ -408,7 +600,7 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
             s.home = true;
           }
         }
-      } else if (rest === web.hub || s.home) {
+      } else if (!job && (rest === web.hub || s.home)) {
         turn(-Math.PI / 2, 2);
         // Now and then she feels the web: a foreleg lifts and pulls on its thread, and the web shivers with it.
         s.tug -= delta;
@@ -428,6 +620,40 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
       }
     }
 
+    // The sling sinks as she nears its middle, slowly at first.
+    if (web.building && s.phase === "sink" && s.route.length > 1) {
+      const f = Math.min(1, (s.leg + s.u) / (s.route.length - 1));
+      web.sink(Math.min(0.999, f * f * (3 - 2 * f)));
+    }
+
+    // The thread being drawn out: from the last point it was made fast at to where she is, or, let out on the breeze,
+    // to as far as it has got.
+    const going = s.route.length > 1 && s.leg < s.route.length - 1;
+    web.laying.seg = -1;
+    if (run && going) {
+      web.laying.seg = run.segs[s.leg];
+      web.laying.from = s.route[s.leg];
+      web.laying.x = s.at.x;
+      web.laying.y = s.at.y;
+      web.laying.z = s.at.z;
+    } else if (making && s.phase === "carry" && going) {
+      web.laying.seg = making.segs[0];
+      web.laying.from = making.nodes[0];
+      web.laying.x = s.at.x;
+      web.laying.y = s.at.y;
+      web.laying.z = s.at.z;
+    } else if (making && s.phase === "float" && s.out < making.segs.length) {
+      const f = s.paid / web.segments[making.segs[s.out]].rest;
+      node(making.nodes[s.out], a);
+      node(making.nodes[s.out + 1], b);
+      a.lerp(b, f);
+      web.laying.seg = making.segs[s.out];
+      web.laying.from = making.nodes[s.out];
+      web.laying.x = a.x;
+      web.laying.y = a.y;
+      web.laying.z = a.z;
+    }
+
     // The body's frame on the web: back toward the eye, riding a little above the threads, lower as it runs.
     up.copy(s3.z);
     right.crossVectors(s.heading, up).normalize();
@@ -435,8 +661,12 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
     const lifted = s.legs.filter((leg) => leg.swing >= 0).length;
     s.dip += (lifted / 4 - s.dip) * (1 - Math.exp(-delta * 25));
     const lift = body * (0.32 - Math.min(1, s.speed / top) * 0.08 - s.dip * 0.035);
+    // Over the bark, where a limb lies under her.
+    // Up at once, so she is never in the wood, and down again gently.
+    const over = Math.max(0, barkFront(s.at.x, s.at.y) + body * 0.1 - s.at.z);
+    s.rise = over > s.rise ? over : s.rise + (over - s.rise) * (1 - Math.exp(-delta * 14));
     basis.makeBasis(right, s.heading, up);
-    basis.setPosition(s.at.x, s.at.y, s.at.z + lift);
+    basis.setPosition(s.at.x, s.at.y, s.at.z + s.rise + lift);
     parts.group.matrixAutoUpdate = false;
     parts.group.matrix.copy(basis);
     parts.group.matrixWorldNeedsUpdate = true;
@@ -502,6 +732,16 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
           d.copy(want).addScaledVector(s.heading, s.speed * swingFor);
           let target = grip(d, length * 0.35, leg.node);
           if (target < 0) target = grip(d, length * 0.7, leg.node);
+          // Spinning, with no thread there to take: a foot goes to the line behind her, the one she hangs by, never
+          // out onto nothing.
+          if (target < 0 && web.building) {
+            across.subVectors(d, s.at);
+            const off = across.dot(right);
+            const along = across.dot(s.heading);
+            d.copy(s.at)
+              .addScaledVector(s.heading, -Math.abs(along) * 0.7 - length * 0.1)
+              .addScaledVector(right, off * 0.1);
+          }
           leg.toNode = target;
           leg.to.copy(d);
           leg.from.copy(leg.foot);
@@ -511,6 +751,10 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
           swinging[leg.set]++;
         }
       }
+
+      // A foot on a limb stands on the bark, not in the wood.
+      const bark = barkFront(leg.foot.x, leg.foot.y);
+      if (bark > leg.foot.z) leg.foot.z = bark;
 
       // The joints, solved in the plane through hip, foot and the body's up: the coxa out, the femur up to a high
       // knee, the patella and tibia down, the metatarsus and tarsus steeply to the foot. Lengths never change: a foot
@@ -597,10 +841,7 @@ export function Spider({ web, look, active }: { web: Web; look: Look; active: bo
       bone(joints[2], joints[3], r * 1.1, true);
     }
     s.started = true;
-    parts.segments.instanceMatrix.needsUpdate = true;
-    parts.joints.instanceMatrix.needsUpdate = true;
-    parts.spines.instanceMatrix.needsUpdate = true;
-  });
+  };
 
   return (
     <>

@@ -149,8 +149,13 @@ export function Dew({ web, look, tier, seed, active }: { web: Web; look: Look; t
         }
       }
       const seg = web.segments[d.seg];
+      // On a thread she has yet to spin there is nothing: a drop gathers there once the thread is laid.
+      if (!seg.spun) {
+        d.falling = false;
+        d.grow = 0;
+      }
       if (!d.falling) {
-        d.grow = Math.min(1, d.grow + delta / 6);
+        if (seg.spun) d.grow = Math.min(1, d.grow + delta / 6);
         const a = seg.a * 3;
         const b = seg.b * 3;
         const shake = Math.max(web.shaken[seg.a], web.shaken[seg.b]);
@@ -159,7 +164,7 @@ export function Dew({ web, look, tier, seed, active }: { web: Web; look: Look; t
         const heavy = d.r / look.dropSize[1];
         const shaken = shake > 0.6 + (1 - heavy) * 1.2 && Math.random() < delta * 8;
         const dripped = Math.random() < delta * 0.006 * heavy ** 6 * (look.air === "rain" ? 5 : 1);
-        if (!seg.alive || (web.time > 1.5 && (shaken || dripped))) {
+        if (seg.spun && (!seg.alive || (web.time > 1.5 && (shaken || dripped)))) {
           d.falling = true;
           d.wait = 2 + Math.random() * 8;
           const dt = 1 / 60;

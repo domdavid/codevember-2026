@@ -8,7 +8,7 @@ An orb web strung between twigs, beaded with dew, in four weathers. Pluck it and
 
 ## How to play
 
-Pull a thread and let it go. Pull too far and it snaps.
+Pull a thread and let it go. Pull too far and it snaps. Press "Watch her spin it" to have the spider build the web from scratch.
 
 Run it locally with `npm run dev` from the repo root, then open <http://localhost:3000/14-tension/>.
 
@@ -28,7 +28,8 @@ Run it locally with `npm run dev` from the repo root, then open <http://localhos
 ### The spider
 
 - Built and moved like the real animal: each leg is coxa, femur, patella, tibia, metatarsus and tarsus, solved every frame so the knee rides high and the foot comes down steeply to grip a thread, and rides that thread as the web swings.
-- She walks in an alternating tetrapod, legs one and three of one side with two and four of the other, runs in dashes with sudden freezes, feels about with her palps when she stops and sits head down at the hub. Pluck the web and she finds her way along the silk to it.
+- She walks in an alternating tetrapod, legs one and three of one side with two and four of the other, runs in dashes with sudden freezes, feels about with her palps when she stops and sits head down at the hub. Pluck the web and she finds her way along the silk to it. Snap threads and, once the web has been still a few seconds, she comes out and lays them again one by one.
+- Ask and she spins the web again, an hour's work in about a minute, in the order a spider does. First she takes the old one down as a spider does, hauling it in to her on the frame and eating it, and keeps the frame if it is whole; if it is not, she lets each side of a new one out on the breeze to the next twig. Then a loose line slung across the top and drawn down into a V under her, a line let down from its point to make a Y, the rest of the spokes out along one and in along the next, the hub wound round, and last the sticky spiral from the outside in, the dew gathering on it behind her.
 
 ### The tree, the light and the weather
 

@@ -31,7 +31,8 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { useDispose } from "../shared/engine/dispose";
 import { sky } from "./backdrop";
 import { KINDS, type Look, LOOKS, type Version } from "./versions";
-import { anchorPoint, mulberry32 } from "./web";
+import { LIMBS, forgetBark, noteBark } from "./limbs";
+import { mulberry32 } from "./web";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- TSL's node types do not model every operator. */
 
@@ -40,35 +41,6 @@ import { anchorPoint, mulberry32 } from "./web";
 // leaves. The bark is in the shape itself: a dense tube pushed in along long, mostly lengthwise cracks between plates,
 // then coloured by them, darkest in the cracks, greyer and weathered on the plates, crusted with lichen and with moss
 // in the cracks; wet in the storm.
-
-const v = (p: [number, number, number]) => new THREE.Vector3(...p);
-
-type Limb = {
-  points: THREE.Vector3[];
-  from: number;
-  to: number;
-  twigs: number;
-  leaves: number;
-};
-// The tree: a trunk rising from far below and behind, heavy limbs spreading out round the edges of the view, and the
-// branches the web hangs from growing out of those, each passing through the points its frame threads are tied to.
-const LIMBS: Limb[] = [
-  // The trunk.
-  { points: [v([-3.4, -11, -2.9]), v([-3.1, -6, -2.5]), v([-2.9, -3, -2.3]), v([-2.8, 0, -2.4]), v([-3.0, 3, -2.6]), v([-3.4, 6.5, -3.1])], from: 0.6, to: 0.3, twigs: 4, leaves: 0 },
-  // A low limb sweeping out under the web to the right.
-  { points: [v([-2.85, -2.6, -2.3]), v([-1.5, -2.95, -1.6]), v([0.5, -3.05, -1.0]), v([2.6, -2.65, -0.5]), v([4.6, -2.0, -0.6]), v([6.8, -1.3, -1.3])], from: 0.3, to: 0.07, twigs: 6, leaves: 4 },
-  // A high limb arching over it.
-  { points: [v([-2.85, 1.2, -2.4]), v([-1.6, 2.35, -1.7]), v([0.5, 2.95, -1.2]), v([2.8, 3.15, -1.0]), v([5.0, 3.65, -1.4]), v([7.2, 4.5, -2.1])], from: 0.28, to: 0.06, twigs: 6, leaves: 4 },
-  // Back and away to the left, up from the high one, and down from the low one.
-  { points: [v([-3.0, -0.5, -2.45]), v([-4.6, 0.6, -3.5]), v([-6.8, 2.0, -5.2])], from: 0.24, to: 0.07, twigs: 4, leaves: 2 },
-  { points: [v([1.5, 3.05, -1.1]), v([2.2, 4.7, -2.4]), v([3.0, 6.8, -4.2])], from: 0.15, to: 0.04, twigs: 3, leaves: 2 },
-  { points: [v([2.6, -2.65, -0.5]), v([3.6, -4.6, -1.5]), v([4.6, -7.2, -3.2])], from: 0.14, to: 0.04, twigs: 3, leaves: 2 },
-  // The branches the web is strung between, out of the limbs.
-  { points: [v([-1.6, -2.9, -1.6]), v([-2.0, -1.8, -0.6]), v(anchorPoint(4)), v(anchorPoint(5)), v(anchorPoint(0)), v([0.7, 1.85, -0.2]), v([1.4, 2.95, -1.1])], from: 0.14, to: 0.09, twigs: 7, leaves: 4 },
-  { points: [v([3.6, 3.3, -1.1]), v([2.4, 1.5, -0.35]), v(anchorPoint(1)), v([0.85, 1.12, 0.06])], from: 0.08, to: 0.012, twigs: 4, leaves: 3 },
-  { points: [v([2.0, -2.8, -0.65]), v([1.5, -1.8, -0.2]), v(anchorPoint(2)), v([1.25, -0.25, 0.03])], from: 0.05, to: 0.009, twigs: 2, leaves: 2 },
-  { points: [v([-0.4, -3.0, -1.2]), v([-0.5, -2.0, -0.3]), v(anchorPoint(3)), v([0.12, -0.92, 0.05])], from: 0.032, to: 0.006, twigs: 1, leaves: 1 }
-];
 
 // Smooth value noise in three dimensions, for shaping on the CPU.
 function makeNoise(seed: number) {
@@ -109,6 +81,9 @@ function barkTube(curve: THREE.Curve<THREE.Vector3>, from: number, to: number, s
   const n = new THREE.Vector3();
   // Turned a different way on each limb, so no two show the same stretch of bark.
   const offset = noise(seed, 1, 2) * 10;
+  // Noted for the spider as it goes, a bead every third of its thickness or so: as thick as the bark can stand out,
+  // which is where the scan is highest.
+  let noted = -Infinity;
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const at = curve.getPointAt(t);
@@ -117,6 +92,10 @@ function barkTube(curve: THREE.Curve<THREE.Vector3>, from: number, to: number, s
     for (const k of swellings) r *= 1 + 0.35 * Math.exp(-((((t - k) * length) / (r * 2.5)) ** 2));
     r *= 1 + 0.07 * noise(s * 3, 0, seed);
     if (t > 0.985) r *= Math.sqrt(Math.max(0, (1 - t) / 0.015));
+    if (s - noted >= Math.max(0.008, r * 0.35)) {
+      noted = s;
+      noteBark(at, r * 1.09);
+    }
     const around = Math.max(1, Math.round((2 * Math.PI * r) / TILE));
     for (let j = 0; j <= sides; j++) {
       const a = (j / sides) * Math.PI * 2;
@@ -131,7 +110,9 @@ function barkTube(curve: THREE.Curve<THREE.Vector3>, from: number, to: number, s
     for (let j = 0; j < sides; j++) {
       const a = i * (sides + 1) + j;
       const b = a + sides + 1;
-      index.push(a, b, a + 1, b, b + 1, a + 1);
+      // Wound so each face looks outward: the other way round the near side is thrown away and the limb shows as
+      // a hollow shell, seen into from outside.
+      index.push(a, a + 1, b, b, a + 1, b + 1);
     }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(position, 3));
@@ -185,6 +166,7 @@ function loadScans(fine: number): Scans {
 
 // The garden's shapes, the same in every weather: grown once, and dressed by the version's materials.
 function grow(fine: number) {
+  forgetBark();
   const random = mulberry32(31);
   const bark: THREE.BufferGeometry[] = [];
   const leafGeo = leafGeometry();

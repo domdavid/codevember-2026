@@ -63,6 +63,10 @@ function Scene() {
     return all;
   }, [seeds, fine]);
   const web = webs[version];
+  // The spider goes to the frame, hauls the old web in and eats it, and spins it again inside the frame as you watch.
+  useSettingAction("build", () => {
+    if (look.spider) web.clear();
+  });
   if (process.env.NODE_ENV !== "production") (globalThis as Record<string, unknown>).__web = web;
 
   useLook(useMemo(() => ({ ...LOOK, exposure: look.exposure, bloom: look.bloom }), [look]));
@@ -174,7 +178,7 @@ function Scene() {
     if (look.air === "rain") {
       for (let k = 0; k < 30 * delta * 60 * 0.1; k++) {
         const i = Math.floor(Math.random() * web.count);
-        if (!web.pinned[i]) web.previous[i * 3 + 2] += 0.004 + Math.random() * 0.006;
+        if (web.inverseMass[i] > 0) web.previous[i * 3 + 2] += 0.004 + Math.random() * 0.006;
       }
       const s = storm.current;
       s.next -= delta;
@@ -193,8 +197,9 @@ function Scene() {
     } else sky.flash.value = 0;
 
     // The view turns about the middle of the web, wherever it has swung to: the point it orbits is drawn to the hub.
+    // Not while an old web is being hauled in: the view stays where the new one will hang.
     const hub = web.hub * 3;
-    orbitPoint.current?.lerp(scratch.set(web.position[hub], web.position[hub + 1], web.position[hub + 2]), 1 - Math.exp(-delta * 4));
+    if (web.eating < 0) orbitPoint.current?.lerp(scratch.set(web.position[hub], web.position[hub + 1], web.position[hub + 2]), 1 - Math.exp(-delta * 4));
     // Focus on the web, wherever the eye has moved to.
     focusDistance.value = Math.max(0.4, camera.position.distanceTo(orbitPoint.current ?? new THREE.Vector3()));
     focusBlur.value = 1.4;
@@ -291,9 +296,10 @@ const tension: DayDefinition = {
       step: 0.01,
       value: 0.6
     },
-    respin: { type: "action", label: "Spin a new web" }
+    respin: { type: "action", label: "Spin a new web" },
+    build: { type: "action", label: "Watch her spin it" }
   },
-  phonePills: ["version", "respin"],
+  phonePills: ["version", "respin", "build"],
   overview: [
     {
       title: "The web",
@@ -314,7 +320,8 @@ const tension: DayDefinition = {
       title: "The spider",
       points: [
         "Built and moved like the real animal: each leg is coxa, femur, patella, tibia, metatarsus and tarsus, solved every frame so the knee rides high and the foot comes down steeply to grip a thread, and rides that thread as the web swings.",
-        "She walks in an alternating tetrapod, legs one and three of one side with two and four of the other, runs in dashes with sudden freezes, feels about with her palps when she stops and sits head down at the hub. Pluck the web and she finds her way along the silk to it."
+        "She walks in an alternating tetrapod, legs one and three of one side with two and four of the other, runs in dashes with sudden freezes, feels about with her palps when she stops and sits head down at the hub. Pluck the web and she finds her way along the silk to it. Snap threads and, once the web has been still a few seconds, she comes out and lays them again one by one.",
+        "Ask and she spins the web again, an hour's work in about a minute, in the order a spider does. First she takes the old one down as a spider does, hauling it in to her on the frame and eating it, and keeps the frame if it is whole; if it is not, she lets each side of a new one out on the breeze to the next twig. Then a loose line slung across the top and drawn down into a V under her, a line let down from its point to make a Y, the rest of the spokes out along one and in along the next, the hub wound round, and last the sticky spiral from the outside in, the dew gathering on it behind her."
       ]
     },
     {
